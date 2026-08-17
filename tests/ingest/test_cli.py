@@ -4,7 +4,7 @@ from unittest.mock import MagicMock, patch
 from docx import Document as DocxDocument
 
 from config import Settings
-from ingest.cli import ingest_file
+from ingest.cli import ingest_file, ingest_path
 
 
 def _settings() -> Settings:
@@ -52,3 +52,16 @@ def test_ingest_file_skips_unchanged_document(mock_upsert, mock_embed, mock_inse
 
     mock_embed.assert_not_called()
     mock_insert.assert_not_called()
+
+
+@patch("ingest.cli.ingest_file", side_effect=[RuntimeError("corrupt file"), None])
+@patch("ingest.cli.get_connection")
+@patch("ingest.cli.load_settings")
+def test_ingest_path_skips_file_that_fails_and_continues(mock_load_settings, mock_get_conn, mock_ingest_file, tmp_path):
+    (tmp_path / "bad.pdf").write_bytes(b"not a real pdf")
+    (tmp_path / "good.docx").write_bytes(b"not a real docx either, ingest_file is mocked")
+    mock_get_conn.return_value.__enter__.return_value = MagicMock()
+
+    ingest_path(tmp_path)  # should not raise, despite the first call raising
+
+    assert mock_ingest_file.call_count == 2

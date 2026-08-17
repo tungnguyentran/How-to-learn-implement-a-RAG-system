@@ -38,7 +38,10 @@ def ingest_path(root: Path) -> None:
     files = sorted(p for p in root.rglob("*") if p.suffix.lower() in SUPPORTED_SUFFIXES)
     with get_connection(settings) as conn:
         for path in files:
-            ingest_file(conn, settings, path)
+            try:
+                ingest_file(conn, settings, path)
+            except Exception:
+                logger.exception("Failed to ingest %s, skipping", path.name)
 
 
 def _build_parser() -> argparse.ArgumentParser:
