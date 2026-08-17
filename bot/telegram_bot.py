@@ -52,6 +52,15 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     await update.message.reply_text(reply)
 
 
+async def handle_error(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Fallback for exceptions unhandled by handle_message (e.g. DB connection
+    failures), so the user gets an error reply instead of silence. Not a
+    replacement for the deliberate, more-specific LLMError handling above."""
+    logger.error("Unhandled error while processing update: %s", update, exc_info=context.error)
+    if isinstance(update, Update) and update.message:
+        await update.message.reply_text(GENERIC_ERROR_MESSAGE)
+
+
 def build_application() -> Application:
     settings = load_settings()
     application = Application.builder().token(settings.telegram_bot_token).build()
@@ -59,6 +68,7 @@ def build_application() -> Application:
     application.bot_data["rate_limiter"] = RateLimiter(settings.rate_limit_per_minute)
     application.add_handler(CommandHandler("start", start))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    application.add_error_handler(handle_error)
     return application
 
 

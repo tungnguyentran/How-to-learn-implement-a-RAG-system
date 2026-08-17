@@ -2,12 +2,14 @@
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from telegram import Update
 
 from bot.ratelimit import RateLimiter
 from bot.telegram_bot import (
     GENERIC_ERROR_MESSAGE,
     RATE_LIMIT_MESSAGE,
     WHITELIST_REJECTION,
+    handle_error,
     handle_message,
 )
 from config import Settings
@@ -92,5 +94,18 @@ async def test_handle_message_sends_generic_error_on_llm_failure(mock_whiteliste
     update, context = _mock_update_and_context(1, "hi", settings, RateLimiter(5))
 
     await handle_message(update, context)
+
+    update.message.reply_text.assert_awaited_once_with(GENERIC_ERROR_MESSAGE)
+
+
+@pytest.mark.asyncio
+async def test_handle_error_replies_with_generic_error_message():
+    update = MagicMock(spec=Update)
+    update.message.reply_text = AsyncMock()
+
+    context = MagicMock()
+    context.error = RuntimeError("db connection refused")
+
+    await handle_error(update, context)
 
     update.message.reply_text.assert_awaited_once_with(GENERIC_ERROR_MESSAGE)
