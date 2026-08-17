@@ -1,6 +1,7 @@
 # tests/ingest/test_cli.py
 from unittest.mock import MagicMock, patch
 
+import pytest
 from docx import Document as DocxDocument
 
 from config import Settings
@@ -52,6 +53,29 @@ def test_ingest_file_skips_unchanged_document(mock_upsert, mock_embed, mock_inse
 
     mock_embed.assert_not_called()
     mock_insert.assert_not_called()
+
+
+@patch("ingest.cli.insert_chunk")
+@patch("ingest.cli.embed", side_effect=[[0.1] * 1536, RuntimeError("embedding failed")])
+@patch("ingest.cli.chunk_text", return_value=["chunk one", "chunk two", "chunk three"])
+@patch("ingest.cli.load_text", return_value="irrelevant, load_text is mocked")
+@patch("ingest.cli.upsert_document", return_value=(42, True))
+def test_ingest_file_deletes_document_on_partial_failure(
+    mock_upsert, mock_load_text, mock_chunk_text, mock_embed, mock_insert, tmp_path
+):
+    path = tmp_path / "policy.docx"
+    path.write_bytes(b"irrelevant, load_text is mocked")
+    conn = MagicMock()
+
+    with pytest.raises(RuntimeError, match="embedding failed"):
+        ingest_file(conn, _settings(), path)
+
+    delete_calls = [
+        call for call in conn.execute.call_args_list if "DELETE FROM documents" in call.args[0]
+    ]
+    assert len(delete_calls) == 1
+    assert delete_calls[0].args[1] == (42,)
+    conn.commit.assert_called()
 
 
 @patch("ingest.cli.ingest_file", side_effect=[RuntimeError("corrupt file"), None])

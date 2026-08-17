@@ -25,11 +25,22 @@ def ingest_file(conn: Connection, settings: Settings, path: Path) -> None:
         logger.info("Skip unchanged file: %s", path.name)
         return
 
-    text = load_text(path)
-    chunks = chunk_text(text, settings.chunk_size, settings.chunk_overlap)
-    for index, chunk in enumerate(chunks):
-        embedding = embed(chunk, settings.embedding_model)
-        insert_chunk(conn, document_id, chunk, embedding, index)
+    try:
+        text = load_text(path)
+        chunks = chunk_text(text, settings.chunk_size, settings.chunk_overlap)
+        for index, chunk in enumerate(chunks):
+            embedding = embed(chunk, settings.embedding_model)
+            insert_chunk(conn, document_id, chunk, embedding, index)
+    except Exception:
+        # Partial ingest: the document row was already committed by upsert_document
+        # with the correct content_hash, but chunks are incomplete. If left as-is,
+        # a retry on the same unmodified file would see content_hash unchanged and
+        # skip reprocessing forever. Delete the document (cascades to any partial
+        # chunks) so the next ingest run treats this file as new again.
+        conn.execute("DELETE FROM documents WHERE id = %s", (document_id,))
+        conn.commit()
+        raise
+
     logger.info("Ingested %s: %d chunks", path.name, len(chunks))
 
 
