@@ -1,0 +1,14 @@
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: hrbot
+      POSTGRES_PASSWORD: hrbot
+      POSTGRES_DB: hrbot
+    ports:
+      - "5433:5432"
+    volumes:
+      - hrbot_pgdata:/var/lib/postgresql/data
+
+volumes:
+  hrbot_pgdata:
