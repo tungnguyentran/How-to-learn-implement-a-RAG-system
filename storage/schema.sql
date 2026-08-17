@@ -15,8 +15,13 @@ CREATE TABLE IF NOT EXISTS document_chunks (
     chunk_index INTEGER NOT NULL
 );
 
-CREATE INDEX IF NOT EXISTS document_chunks_embedding_idx
-    ON document_chunks USING ivfflat (embedding vector_cosine_ops) WITH (lists = 100);
+-- No approximate-nearest-neighbor index (ivfflat/hnsw): this project's expected
+-- corpus (a few hundred HR policy documents, low thousands of chunks) is small
+-- enough that an exact sequential scan via pgvector's `<=>` operator is fast
+-- (milliseconds) and always correct. An ivfflat index was tried and reverted —
+-- at this row count it caused `search_similar` to silently drop matching rows
+-- (see project history). Revisit with a properly-tuned index (and `probes`
+-- tuning) only if the corpus grows to tens of thousands of chunks.
 
 CREATE TABLE IF NOT EXISTS conversations (
     id SERIAL PRIMARY KEY,
