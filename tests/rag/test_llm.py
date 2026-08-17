@@ -21,6 +21,26 @@ def test_embed_wraps_exceptions_as_llm_error():
             embed("cau hoi", model="text-embedding-3-small")
 
 
+def test_embed_retries_once_then_succeeds():
+    fake_response = {"data": [{"embedding": [0.4, 0.5, 0.6]}]}
+    with patch(
+        "rag.llm.litellm.embedding",
+        side_effect=[RuntimeError("transient"), fake_response],
+    ) as mock_embed:
+        result = embed("cau hoi", model="text-embedding-3-small")
+
+    assert result == [0.4, 0.5, 0.6]
+    assert mock_embed.call_count == 2
+
+
+def test_embed_raises_llm_error_after_exhausting_retries():
+    with patch("rag.llm.litellm.embedding", side_effect=RuntimeError("down")) as mock_embed:
+        with pytest.raises(LLMError):
+            embed("cau hoi", model="text-embedding-3-small")
+
+    assert mock_embed.call_count == 2
+
+
 def test_complete_returns_text_on_first_success():
     fake_response = {"choices": [{"message": {"content": "cau tra loi"}}]}
     with patch("rag.llm.litellm.completion", return_value=fake_response) as mock_complete:
