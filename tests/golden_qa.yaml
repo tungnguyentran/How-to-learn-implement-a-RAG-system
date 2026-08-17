@@ -1,0 +1,11 @@
+# Điền câu hỏi + đáp án kỳ vọng sau khi đã ingest tài liệu chính sách thật (Task 19).
+# Mỗi mục:
+#   question: câu hỏi thực tế nhân viên có thể hỏi
+#   expected_sources: tên file phải xuất hiện trong danh sách nguồn trả về
+#   expected_keywords: các từ khóa bắt buộc phải có trong nội dung câu trả lời (không phân biệt hoa/thường)
+- question: "Nhân viên chính thức được nghỉ phép năm bao nhiêu ngày?"
+  expected_sources: []
+  expected_keywords: []
+- question: "Quy trình xin nghỉ ốm như thế nào?"
+  expected_sources: []
+  expected_keywords: []
