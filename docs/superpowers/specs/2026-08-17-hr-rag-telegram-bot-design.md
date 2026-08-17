@@ -29,7 +29,7 @@ Telegram user → [Bot handler] → whitelist check → RAG engine → LiteLLM (
 - **`storage/`** — schema Postgres (pgvector) + các hàm truy vấn: insert/update chunk, similarity search, đọc/ghi lịch sử hội thoại, kiểm tra whitelist. Cũng cung cấp CLI quản trị whitelist: `python -m storage.whitelist add <telegram_user_id> <display_name>` / `remove <telegram_user_id>` / `list` — đây là cách duy nhất HR/admin thêm/xóa người dùng được phép hỏi bot trong giai đoạn này.
 - **`rag/`** — logic lõi, không biết gì về Telegram: nhận câu hỏi + lịch sử hội thoại → embed câu hỏi → tìm top-k chunk liên quan → dựng prompt (kèm nguồn) → gọi LiteLLM completion (DeepSeek) → trả về câu trả lời + danh sách nguồn.
 - **`bot/`** — `python-telegram-bot`: nhận tin nhắn, kiểm tra whitelist, gọi `rag/`, format và gửi trả lời. Slack sau này chỉ cần thêm `bot/slack_bot.py` mới dùng lại `rag/` + `storage/`.
-- **`config.py`** — đọc API keys, tên model (DeepSeek qua LiteLLM, embedding OpenAI), danh sách whitelist, chunk size, top-k từ biến môi trường.
+- **`config.py`** — đọc API keys, tên model (DeepSeek qua LiteLLM, embedding OpenAI), chunk size/overlap, top-k, similarity threshold từ biến môi trường. Whitelist **không** đọc từ env — nguồn duy nhất là bảng `whitelist` trong Postgres, quản lý qua CLI của `storage/` (xem mục đó).
 
 ## Lựa chọn công nghệ
 
@@ -42,6 +42,7 @@ Telegram user → [Bot handler] → whitelist check → RAG engine → LiteLLM (
 | Bot framework | `python-telegram-bot` | Chuẩn phổ biến, hỗ trợ tốt async |
 | Ngôn ngữ | Python | Hệ sinh thái RAG/PDF-parsing phong phú, LiteLLM native Python |
 | Chunk size / overlap | Mặc định 800 token / 100 token overlap, cấu hình qua env `CHUNK_SIZE` / `CHUNK_OVERLAP` | Overlap tránh cắt ngang ý ở ranh giới chunk, ảnh hưởng trực tiếp chất lượng retrieval |
+| Similarity threshold | Mặc định 0.3, cấu hình qua env `SIMILARITY_THRESHOLD` | Ngưỡng quyết định fallback "không tìm thấy" — quan trọng ngang chunk size/top-k, cần điều chỉnh được khi tune chất lượng retrieval |
 
 ## Data model (Postgres + pgvector)
 
@@ -65,15 +66,17 @@ whitelist(
 ```
 
 - `content_hash` trên `documents` đảm bảo **ingest idempotent**: chạy lại script không tạo trùng chunk nếu nội dung file không đổi; nếu file đổi, xóa chunk cũ của document và insert lại.
-- `conversations` chỉ giữ N tin nhắn gần nhất mỗi user (mặc định 10) — dọn định kỳ (job đơn giản xóa bản ghi vượt N per user), không cần cơ chế TTL phức tạp.
-- **Dữ liệu nhạy cảm**: `conversations` có thể chứa nội dung cá nhân (lý do xin nghỉ, câu hỏi về lương/phúc lợi). Retention mặc định: tự động xóa bản ghi cũ hơn 30 ngày (job định kỳ, cấu hình qua env `CONVERSATION_RETENTION_DAYS`). Truy cập DB giới hạn cho admin vận hành hệ thống, không public qua bất kỳ API nào khác ngoài `bot/`.
+- `conversations` có 2 cơ chế dọn dẹp độc lập, không thay thế nhau:
+  1. **Cửa sổ ngữ cảnh (N gần nhất)**: khi đọc lịch sử để dựng prompt (bước 2 ở luồng dưới), chỉ lấy N tin nhắn gần nhất mỗi user (mặc định 10) — không xóa dữ liệu, chỉ giới hạn những gì đưa vào prompt.
+  2. **Retention theo thời gian (30 ngày)**: job định kỳ xóa cứng bản ghi cũ hơn `CONVERSATION_RETENTION_DAYS` (mặc định 30), áp dụng cho toàn bộ bảng bất kể có nằm trong N tin nhắn gần nhất hay không. Đây là cơ chế ưu tiên cao hơn vì lý do privacy: nếu user ít nhắn tin và N tin nhắn gần nhất trải dài hơn 30 ngày, các tin cũ hơn 30 ngày vẫn bị xóa — chấp nhận việc ngữ cảnh multi-turn khi đó có thể ngắn hơn N.
+- **Dữ liệu nhạy cảm**: `conversations` có thể chứa nội dung cá nhân (lý do xin nghỉ, câu hỏi về lương/phúc lợi). Truy cập DB giới hạn cho admin vận hành hệ thống, không public qua bất kỳ API nào khác ngoài `bot/`.
 
 ## Luồng retrieve + generate
 
 1. Kiểm tra `telegram_user_id` có trong `whitelist` — nếu không, trả lời từ chối lịch sự và dừng (không gọi LLM, không lưu vào `conversations`).
 2. Lấy N tin nhắn gần nhất của user từ `conversations` làm ngữ cảnh.
 3. Embed câu hỏi (OpenAI qua LiteLLM) → similarity search top-k (mặc định k=5) trên `document_chunks`, dùng cosine similarity = `1 - (embedding <=> query_embedding)` (pgvector `<=>` trả về cosine *distance*; code phải quy đổi rõ ràng, không dùng trực tiếp giá trị distance làm similarity).
-4. Nếu chunk liên quan nhất có similarity < ngưỡng 0.3 → coi như "không tìm thấy", chuyển sang nhánh fallback (xem Xử lý lỗi), bỏ qua bước 5.
+4. Nếu chunk liên quan nhất có similarity dưới `SIMILARITY_THRESHOLD` (mặc định 0.3) → coi như "không tìm thấy", chuyển sang nhánh fallback (xem Xử lý lỗi), bỏ qua bước 5.
 5. Dựng prompt gồm: system prompt giới hạn phạm vi ("chỉ trả lời dựa trên các đoạn trích được cung cấp, nếu không đủ thông tin thì nói rõ là không biết, không suy diễn hoặc trả lời ngoài chủ đề chính sách HR"), câu hỏi hiện tại, lịch sử hội thoại, các chunk liên quan kèm tên file nguồn.
 6. Gọi LiteLLM completion (DeepSeek) → nhận câu trả lời.
 7. Gửi lại Telegram: câu trả lời kèm dòng trích nguồn (ví dụ `📄 Nguồn: Quy chế nghỉ phép 2024.pdf`).
@@ -85,6 +88,7 @@ whitelist(
 - **User không trong whitelist**: từ chối ngay, không gọi LLM (tiết kiệm chi phí, tránh lộ thông tin nội bộ). Lượt này **không lưu** vào `conversations` (không phải câu hỏi hợp lệ của user được cấp quyền).
 - **Lỗi gọi LiteLLM** (timeout/lỗi API, ở bước embedding hoặc completion): retry 1 lần, nếu vẫn lỗi thì trả lời thân thiện cho user và log lỗi chi tiết. Lượt này **không lưu** vào `conversations` — vì không phải nội dung trả lời thật, tránh nhiễu ngữ cảnh cho câu hỏi tiếp theo.
 - **Ingest lại file đã đổi nội dung**: phát hiện qua `content_hash` khác giá trị đã lưu, xóa toàn bộ chunk cũ của document đó rồi insert lại từ đầu.
+- **Nhiều tin nhắn dồn dập từ cùng 1 user**: xử lý tuần tự theo user (lock đơn giản theo `telegram_user_id`) để tránh race condition khi đọc/ghi `conversations`; giới hạn nhẹ mặc định 5 tin nhắn/phút/user (env `RATE_LIMIT_PER_MINUTE`) để tránh lạm dụng gây tốn chi phí API.
 
 ## Testing
 
