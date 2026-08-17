@@ -1,4 +1,5 @@
 # storage/chunks.py
+from pgvector import Vector
 from psycopg import Connection
 
 
@@ -21,12 +22,13 @@ def insert_chunk(
         INSERT INTO document_chunks (document_id, chunk_text, embedding, chunk_index)
         VALUES (%s, %s, %s, %s)
         """,
-        (document_id, chunk_text, embedding, chunk_index),
+        (document_id, chunk_text, Vector(embedding), chunk_index),
     )
     conn.commit()
 
 
 def search_similar(conn: Connection, query_embedding: list[float], top_k: int) -> list[dict]:
+    vector_param = Vector(query_embedding)
     rows = conn.execute(
         """
         SELECT dc.chunk_text, d.filename, dc.embedding <=> %s AS distance
@@ -35,7 +37,7 @@ def search_similar(conn: Connection, query_embedding: list[float], top_k: int) -
         ORDER BY dc.embedding <=> %s
         LIMIT %s
         """,
-        (query_embedding, query_embedding, top_k),
+        (vector_param, vector_param, top_k),
     ).fetchall()
     return [
         {
