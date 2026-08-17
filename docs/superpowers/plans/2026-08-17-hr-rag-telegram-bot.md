@@ -172,6 +172,9 @@ def test_load_settings_reads_overrides(monkeypatch):
 
 
 def test_load_settings_raises_on_missing_required(monkeypatch):
+    # Prevent a real .env file (e.g. created by following the README) from
+    # repopulating these vars via load_dotenv() and masking the failure.
+    monkeypatch.setattr("config.load_dotenv", lambda *args, **kwargs: None)
     monkeypatch.delenv("DATABASE_URL", raising=False)
     monkeypatch.delenv("TELEGRAM_BOT_TOKEN", raising=False)
 
@@ -2005,7 +2008,7 @@ This is a regression harness against **real** ingested documents and **real** AP
   expected_keywords: []
 ```
 
-Placeholder file — fill in `expected_sources`/`expected_keywords` once real policy documents exist (see Task 19, Step 1).
+Placeholder file — fill in `expected_sources`/`expected_keywords` once real policy documents exist (see Task 19, Step 4).
 
 - [ ] **Step 2: Create `tests/test_golden.py`**
 
