@@ -18,6 +18,7 @@ SUPPORTED_SUFFIXES = {".pdf", ".docx"}
 
 
 def ingest_file(conn: Connection, settings: Settings, path: Path) -> None:
+    logger.info("Processing %s", path.name)
     content = path.read_bytes()
     content_hash = compute_content_hash(content)
     document_id, changed = upsert_document(conn, path.name, content_hash)
@@ -47,12 +48,18 @@ def ingest_file(conn: Connection, settings: Settings, path: Path) -> None:
 def ingest_path(root: Path) -> None:
     settings = load_settings()
     files = sorted(p for p in root.rglob("*") if p.suffix.lower() in SUPPORTED_SUFFIXES)
+    logger.info("Found %d file(s) to scan under %s", len(files), root)
+
+    failed = 0
     with get_connection(settings) as conn:
         for path in files:
             try:
                 ingest_file(conn, settings, path)
             except Exception:
+                failed += 1
                 logger.exception("Failed to ingest %s, skipping", path.name)
+
+    logger.info("Done: %d scanned, %d failed", len(files), failed)
 
 
 def _build_parser() -> argparse.ArgumentParser:
